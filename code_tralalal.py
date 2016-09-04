@@ -6,7 +6,15 @@ TWINS_DATA = r'C:\Ron\אוניברסיטה\תל אביב\שנה ב\פרויקט\
 
 DEST_DIR = r'C:\Ron\אוניברסיטה\תל אביב\שנה ב\פרויקט\twins data\changed_data\\'
 
+TMP_DIR = r'C:\Ron\אוניברסיטה\תל אביב\שנה ב\פרויקט\twins data\changed_data\tmp\\'
+
 PANELS_LST = ['P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7']
+
+pd.set_option('precision',4)
+
+OUTPUT_DIR = r'C:\Ron\אוניברסיטה\תל אביב\שנה ב\פרויקט\twins data\changed_data\666_Ron\\'
+
+INPUT_DIR = r'C:\Ron\אוניברסיטה\תל אביב\שנה ב\פרויקט\twins data\changed_data\5_Trait_Values\By_Panels\broken\\'
 
 ################# irrelevant part #########################
 
@@ -107,6 +115,19 @@ def get_panel_id_dict(trait_id, single_trait_data,panel_numbers,panel_dict ):
     else:
         ret_val = "All Markers are Null"
     return ret_val
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 ################# only this is good #########################
 
@@ -475,7 +496,7 @@ def create_corr_between_all(united_vals_path):
     #create the dataframe in the needed way
     trans = df.transpose()
     trans = trans.drop("Panel ID")
-    trans_float = trans.astype(float)
+    trans_float = trans.astype('float32')
     
     # run the corr function
     print_log("create coor - before coor")
@@ -486,7 +507,7 @@ def create_corr_between_all(united_vals_path):
     return corr_res
     
     
-def create_tresholded_corr_df(corr_df, treshlod, output_file, print_indicator):
+def create_tresholded_corr_df(corr_df, treshlod, compare_only_diff_panels ,output_file, print_indicator,is_return):
     ''' This method gets dataframe contains the correlations of all traits 
     and creates a new one with those from different panels 
     with higher correlation than treshold'''
@@ -502,7 +523,8 @@ def create_tresholded_corr_df(corr_df, treshlod, output_file, print_indicator):
             print_log("i is " + str(i))
         for j in range(i, len(traits)):
             trait2 = traits[j]
-            if (get_panel_id_substr(trait1) != get_panel_id_substr(trait2) and 
+            is_same_panel = get_panel_id_substr(trait1) == get_panel_id_substr(trait2)
+            if ( not(is_same_panel and compare_only_diff_panels) and 
             corr_df[trait1][trait2] > treshlod):
                 var = (trait1,trait2,corr_df[trait1][trait2])
                 corr_res_lst.append(var)
@@ -513,7 +535,91 @@ def create_tresholded_corr_df(corr_df, treshlod, output_file, print_indicator):
     
     print_log("create_tresholded_corr_df - after final df before write file")
     
-    res_df.to_excel(output_file,index = False)
+    res_df.to_csv(output_file,index = False) #changed to CSV to be limitless
     
     print_log("create_tresholded_corr_df - after write file - finished")
     
+    if is_return:
+        return res_df
+
+
+def create_corr_between_two_files(path1, path2 ):
+    ''' Because of Memory Error when running the correlation on all data once this method
+    gets 2 paths, combine them to create new file and sends it into create_corr_between_all'''
+    
+    print_log("create_corr_between_two_files - start")
+    if (path1 == path2):
+        # same file, send it directly
+        print_log("create_corr_between_two_files - same file")
+        corr_df = create_corr_between_all(path1)
+    else:
+        #create single file
+        print_log("create_corr_between_two_files - different files")
+        df1 = pd.read_excel(path1, 0, index_col = "FlowJo Subject ID")
+        df2 = pd.read_excel(path2, 0, index_col = "FlowJo Subject ID")
+        #combine DataFrames
+        print_log("create_corr_between_two_files - combine DataFrames")
+        combined = df1.append(df2, ignore_index = False)
+        tmp_path = TMP_DIR + 'tmp_combine.xlsx'
+        combined.to_excel(tmp_path)
+        #now there is a DF, send it's path to create_corr_between_all
+        print_log("create_corr_between_two_files - before func call")
+        corr_df = create_corr_between_all(tmp_path)
+        os.remove(tmp_path)
+    print_log("create_corr_between_two_files - before return")
+    return corr_df
+    
+
+def break_files_into_parts(path, new_amount_of_rows):
+    ''' This method takes a file and breaks it into new files, 
+    each with new_amount_of_rows rows'''
+    
+    print_log("break_files_into_parts - start, before read file")    
+    
+    df = pd.read_excel(path, 0, index_col = "FlowJo Subject ID")
+    print_log("break_files_into_parts - after read file, before loop")
+    num_of_rows = len(df.index)
+    
+    i = 0
+    cycle = 1
+    while i < num_of_rows:
+        upper_limit = min(i + new_amount_of_rows, num_of_rows) 
+        tmp = df[i:upper_limit]
+        rev = path[::-1]
+        new_path = path[:(len(path) - rev.find(".")) - 1] + "_" + str(cycle) + path[(len(path) - rev.find(".")) - 1:]
+        #path till .suffix + _CYCLE_NUM + suffix
+        print_log("break_files_into_parts - before write cycle number " + str(cycle))
+        tmp.to_excel(new_path,index = True)
+        print_log("break_files_into_parts - after write cycle number " + str(cycle))
+        cycle += 1
+        i = upper_limit
+    
+        
+
+
+def create_correlation_map(path1, path2):
+    ''' This function does calls function described in create_jobs_functions'''
+    corr = create_corr_between_two_files(path1, path2)
+    
+    
+    
+
+
+def create_jobs_functions():
+    ''' This function runs on all broken files in INPUT_DIR, calculates the correlation 
+    between all traits in each two files using create_corr_between_two_files. 
+    Then, for the result, in case the panels are different, it calculates
+    also the tresholded correlatin using create_tresholded_corr_df. 
+    Both of files are written into OUTPUT_DIR'''
+    
+    input_files = os.listdir(INPUT_DIR)
+    n = len(input_files) #amount of files
+    for i in range(0, n):
+        path1 = INPUT_DIR + input_files[i]
+        for j in range(i, n):
+            path2 = INPUT_DIR + input_files[j]
+            create_correlation_map(path1, path2)
+            
+    
+    
+        
