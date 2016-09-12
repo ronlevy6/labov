@@ -3,19 +3,19 @@ import datetime as dt
 import os
 import sys
 
-TWINS_DATA = r'C:\Ron\אוניברסיטה\תל אביב\שנה ב\פרויקט\twins data\\'
+TWINS_DATA = r'/groups/igv/ronlevy/data//'
 
-DEST_DIR = r'C:\Ron\אוניברסיטה\תל אביב\שנה ב\פרויקט\twins data\changed_data\\'
+DEST_DIR = r'/groups/igv/ronlevy/data//'
 
-TMP_DIR = r'C:\Ron\אוניברסיטה\תל אביב\שנה ב\פרויקט\twins data\changed_data\tmp\\'
+TMP_DIR = r'/groups/igv/ronlevy/data/tmp//'
 
 PANELS_LST = ['P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7']
 
 pd.set_option('precision',4)
 
-OUTPUT_DIR = r'C:\Ron\אוניברסיטה\תל אביב\שנה ב\פרויקט\twins data\changed_data\666_Ron\\'
+OUTPUT_DIR = r'/groups/igv/ronlevy/data/corr_results//'
 
-INPUT_DIR = r'C:\Ron\אוניברסיטה\תל אביב\שנה ב\פרויקט\twins data\changed_data\5_Trait_Values\By_Panels\broken\\'
+INPUT_DIR = r'/groups/igv/ronlevy/data/5_Trait_Values/By_Panels/broken//'
 
 # Consts for creationg correlation maps
 DEFAULT_TRESHOLD = 0.2
@@ -604,8 +604,8 @@ def create_correlation_map(path1, path2, is_return,to_overwrite):
     print_log("create_correlation_map - start before create_corr_between_two_files")
     
     corr_df = create_corr_between_two_files(path1, path2)
-    tresh_df = "same panel, no tresholded data"
-    
+    tresh_df = "same panel, no tresholded corr DF" 
+
     panel1 = get_panel_from_path(path1)
     panel2 = get_panel_from_path(path2)
     output_path = OUTPUT_DIR + panel1.upper() + "_" + panel2.upper() + '_corr.csv'
@@ -677,17 +677,29 @@ def get_panel_from_path(singeles_paneled_broken_filename):
 def main():
     # get parameters from user
     args = sys.argv
-    filename1 = args[1]
-    filename2 = args[2]
-    is_return = args[3]
-    to_overwrite = args[4]
+    corr_df_path = args[1]
+    treshold = args[2]
+    output_dir = args[3]
+    panel1 = args[4]
+    panel2 = args[5]
     
-    path1 = INPUT_DIR + filename1
-    path2 = INPUT_DIR + filename2
+    is_return = False  
+    compare_only_diff_panels = True
+    print_indicator = 800    
     
-    create_correlation_map(path1, path2, is_return,to_overwrite)
+    tresh = float(treshold)
     
+    tresh_output_path = output_dir + panel1.upper() + "_" + panel2.upper() + '_treshold_'+ treshold.replace(".","_") + '_corr.csv'
+    
+    corr_df_path = OUTPUT_DIR + corr_df_path
 
+    #the : is added here so the real panel ID will be get and not sub panel id
+    if (panel1[:2] != panel2[:2]):
+        print_log("MAIN - tresh is needed, before read DF")
+        corr_df = pd.read_csv(corr_df_path,header = 0, index_col = "FlowJo Subject ID")
+        print_log("MAIN - after read DF, before tresh")
+        
+        create_tresholded_corr_df(corr_df, tresh, compare_only_diff_panels ,tresh_output_path, print_indicator,is_return)
 
 if __name__ == "__main__":
     main()

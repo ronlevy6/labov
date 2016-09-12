@@ -3,19 +3,19 @@ import datetime as dt
 import os
 import sys
 
-TWINS_DATA = r'C:\Ron\אוניברסיטה\תל אביב\שנה ב\פרויקט\twins data\\'
+TWINS_DATA = r'/groups/igv/ronlevy/data//'
 
-DEST_DIR = r'C:\Ron\אוניברסיטה\תל אביב\שנה ב\פרויקט\twins data\changed_data\\'
+DEST_DIR = r'/groups/igv/ronlevy/data//'
 
-TMP_DIR = r'C:\Ron\אוניברסיטה\תל אביב\שנה ב\פרויקט\twins data\changed_data\tmp\\'
+TMP_DIR = r'/groups/igv/ronlevy/data/tmp//'
 
 PANELS_LST = ['P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7']
 
 pd.set_option('precision',4)
 
-OUTPUT_DIR = r'C:\Ron\אוניברסיטה\תל אביב\שנה ב\פרויקט\twins data\changed_data\666_Ron\\'
+OUTPUT_DIR = r'/groups/igv/ronlevy/data/corr_results//'
 
-INPUT_DIR = r'C:\Ron\אוניברסיטה\תל אביב\שנה ב\פרויקט\twins data\changed_data\5_Trait_Values\By_Panels\broken\\'
+INPUT_DIR = r'/groups/igv/ronlevy/data/5_Trait_Values/By_Panels/broken//'
 
 # Consts for creationg correlation maps
 DEFAULT_TRESHOLD = 0.2
@@ -555,7 +555,7 @@ def create_corr_between_two_files(path1, path2):
     if (path1 == path2):
         # same file, send it directly
         print_log("create_corr_between_two_files - same file")
-        df = pd.read_excel(path1, 0, index_col = "FlowJo Subject ID")
+        df = create_corr_between_all(path1)
     else:
         #create single file
         print_log("create_corr_between_two_files - different files")
@@ -604,7 +604,6 @@ def create_correlation_map(path1, path2, is_return,to_overwrite):
     print_log("create_correlation_map - start before create_corr_between_two_files")
     
     corr_df = create_corr_between_two_files(path1, path2)
-    tresh_df = "same panel, no tresholded data"
     
     panel1 = get_panel_from_path(path1)
     panel2 = get_panel_from_path(path2)
