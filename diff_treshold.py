@@ -2,6 +2,7 @@ import pandas as pd
 import datetime as dt
 import os
 import sys
+import re
 
 TWINS_DATA = r'/groups/igv/ronlevy/data//'
 
@@ -490,7 +491,23 @@ def run_function_on_traits(files_dir, panel1, panel2, func, is_numerical, tresho
     
     print_log("run_function_on_traits - after write file")
         
+def calc_2_traits_corr(df, trait1, trait2):
+    ''' This method gets a  SINGELES PANELED trait values DF and 2 traits and
+    returns their correlation'''
     
+    #take only needed data, remove panel id column and change type to float
+    trait1_data = df.loc[trait1]
+    trait2_data = df.loc[trait2]
+    
+    trait1_data.drop("Panel ID", inplace = True)
+    trait2_data.drop("Panel ID", inplace = True)
+    
+    trait1_fixed = trait1_data.astype(float)
+    trait2_fixed = trait2_data.astype(float)
+    
+    corr = trait1_fixed.corr(trait2_fixed)
+    
+    return corr
 
 def create_corr_between_all(df):
     ''' this method gets a FD to a united vals and returns dataframe(!!!!) with 
@@ -674,6 +691,37 @@ def get_panel_from_path(singeles_paneled_broken_filename):
     return ret_val
 
 
+def unite_all_pass_files(directory,treshold):
+    ''' This method gets a directory with files that passed certain treshold 
+    and unites them into a single file'''
+    
+    print_log("unite_all_pass_files start")
+    regex = 'P\d\d_P\d\d_treshold.*corr.csv'
+    pattern = re.compile(regex) #check if need to add re.DOTALL
+    is_first = True
+    
+    for filename in os.listdir(directory):
+        if re.match(pattern,filename) != None:
+            print_log("unite_all_pass_files - good file")
+            full_path = directory + filename
+            if is_first:
+                #first file - need to read, not append
+                df = pd.read_csv(full_path,header = 0, index_col = "trait1")
+                is_first = False
+            else:
+                #not the first file, add it to dataframe
+                tmp = pd.read_csv(full_path,header = 0, index_col = "trait1")
+                df = df.append(tmp,ignore_index = False)
+    
+    print_log("unite_all_pass_files finished uniting files, writing DF to file")
+    new_file_name = 'united_' + str(treshold).replace(".","") + '.csv'
+    full_path = directory + new_file_name
+    df.to_csv(full_path,header = True, index = True)
+        
+            
+            
+        
+
 def main():
     # get parameters from user
     args = sys.argv
@@ -700,7 +748,7 @@ def main():
         print_log("MAIN - after read DF, before tresh")
         
         create_tresholded_corr_df(corr_df, tresh, compare_only_diff_panels ,tresh_output_path, print_indicator,is_return)
-
+'''
 if __name__ == "__main__":
     main()
-    
+'''    
