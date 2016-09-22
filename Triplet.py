@@ -42,7 +42,7 @@ class Triplet():
             
         diff_treshold.print_log("create_all_triplets - start")
             
-        graph_triplets = network.find_all_triplets(graph)
+        graph_triplets = network.find_all_triplets(graph, "corr")
             
         #create a list with all unnconeted traits
         unconnected_traits = [triplet[1] for triplet in graph_triplets]
@@ -70,8 +70,8 @@ class Triplet():
             
             (center,node1,node2,corr1,corr2) = graph_triplets[i]
             unconnected_corr = corr_df.loc[node1,node2]
-            triplet = Triplet(center,node1, node2, corr1, corr2, unconnected_corr)
-            triplets_lst.append(triplet)
+            curr_triplet = Triplet(center,node1, node2, corr1, corr2, unconnected_corr)
+            triplets_lst.append(curr_triplet)
             
         diff_treshold.print_log("create_all_triplets - after loop - finished") 
         return triplets_lst

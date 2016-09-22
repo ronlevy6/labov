@@ -7,10 +7,25 @@ import network
 import networkx as nx
 
 
-def load_df(united_file_path):
+##################### united and filtered df stats #########################
+'''
+corr_dist_between_pannels - distribution of correlation between 2 panels
+calc_corr_dist_per_all_panels - runs corr_dist_between_pannels for all pairs
+pie_chart_neigbours_panel - for each panel distribution of neighbour's panel
+
+'''
+
+def load_df(p_val_united_file_path, corr_united_path_file ,max_val):
     ''' this method loads the df of all data with correlation above treshold'''
-    df = pd.read_csv(united_file_path,header = 0, index_col = ["trait1","trait2"])
-    return df
+    df = pd.read_csv(p_val_united_file_path,header = 0, index_col = ["trait1","trait2"])
+    corr_united_df = pd.read_csv(corr_united_path_file,header = 0, index_col = ["trait1","trait2"])
+    #filter p_val df to needed data
+    good_p_val_df = df[df["needed_p_val"] < max_val]
+    
+    good_corr_df = corr_united_df.loc[list(good_p_val_df.index)]
+    
+    
+    return good_corr_df
 
 
 def filter_df_according_to_panels(united_df, panel1, panel2):
@@ -25,11 +40,11 @@ def filter_df_according_to_panels(united_df, panel1, panel2):
     
     return filtered_df
 
-def corr_dist_between_pannels(filtered_df,panel1,panel2,is_show):
+def corr_dist_between_pannels(filtered_df,panel1,panel2,is_show,col_to_filter):
     ''' this method calculates the distribution of the correlation between 2 panels'''
     
-    corr_dist = np.array(filtered_df["corr"])
-    plt.xlabel("correlation")
+    corr_dist = np.array(filtered_df[col_to_filter])
+    plt.xlabel("p_val")
     plt.ylabel("frequency")
     plt.title("frequency for correlation between panels " + panel1 + " and " + panel2)
     plt.hist(corr_dist)
@@ -49,7 +64,7 @@ def calc_corr_dist_per_all_panels(united_df):
             #no need to calc between same panels
             panel2 = diff_treshold.PANELS_LST[j]
             filtered_df = filter_df_according_to_panels(united_df,panel1,panel2)        
-            corr_dist_between_pannels(filtered_df,panel1,panel2,is_show = False)
+            corr_dist_between_pannels(filtered_df,panel1,panel2,is_show = True,col_to_filter = "corr")
                                       
                                       
 def pie_chart_neigbours_panel(united_df,is_pie,is_save):
@@ -88,6 +103,18 @@ def pie_chart_neigbours_panel(united_df,is_pie,is_save):
             plt.savefig(fig_name)
         plt.show()
         
+
+
+##################### graph stats #########################
+'''
+degree_distribution - per panel
+all_pannels_degree_distribution - runs degree_distribution on all panels
+calc_hub_and_neighbours_markers - for each hub calculate the markers of neighbours
+calc_hubs_neighbour_panels - for each hub calcs distribution of neigbhours by panels
+stats_of_connected_components - distribution of nodes by panels/markers
+degrees_of_nodes_in_connected_coponents - distribution of degrees for each connected component 
+'''
+
 def degree_distribution(graph,panel_id,is_save):
     ''' this method gets a graph as input and prints for each panel the distribution
     of neighbours number'''
@@ -108,11 +135,15 @@ def degree_distribution(graph,panel_id,is_save):
     if is_save:
         plt.savefig(fig_name)
     plt.show()
+
         
 def all_pannels_degree_distribution(graph,is_save):
     
     for panel_id in diff_treshold.PANELS_LST:
         degree_distribution(graph,panel_id,is_save)
+
+
+######## hubs statistics #########
 
 
 def calc_hub_and_neighbours_markers(graph, is_save):
@@ -142,29 +173,85 @@ def calc_hub_and_neighbours_markers(graph, is_save):
     diff_treshold.print_log("calc_hub_and_neighbours_markers finished")
         
 
-def calc_markers_per_connected_components(graph, is_save):
-    ''' this methdo gets a graph and creates an plotbar for each connected component
-    with the count of each marker in the nodes in the connected component'''
+def calc_hubs_neighbour_panels(graph, is_save):
+    ''' this method gets a graph, calculates its hubs and for each one 
+    creates a distribution of neighbours panels'''
     
-    diff_treshold.print_log("calc_markers_per_connected_components start")
+    diff_treshold.print_log("calc_hubs_neighbour_panels - start")
+    
+    hubs_lst = network.get_hubs(graph)
+    
+    diff_treshold.print_log("calc_hubs_neighbour_panels - looping each hub")
+    
+    for hub in hubs_lst:
+        name = hub[0]
+        panels_dict = {}
+        for nei in graph.neighbors(name):
+            curr_panel = graph.node[nei]["panel_id"]
+            panels_dict[curr_panel] = panels_dict.get(curr_panel,0) + 1
+        
+        filename = "panels_hist_for_hub_" + str(name).replace(":","_") + ".png"
+        title = "panels distribution of hub " + name + " neighbours"
+        xlabel = "panel id"
+        ylabel = "count"
+        color = "red"
+        
+        histogram_dict(panels_dict, filename, title, xlabel, ylabel, color, is_save)
+        
+    
+######## connected components statistics #########
+
+
+def stats_of_connected_components(graph, field_to_check, name_field, is_save):
+    ''' this methdo gets a graph and creates an plotbar for each connected component
+    with the count of each required field in the nodes in the connected component'''
+    
+    diff_treshold.print_log("stats_of_connected_components - start")
     
     connected_components = list(nx.connected_components(graph))
     for i in range(0, len(connected_components)):
         group = connected_components[i]
-        markers = []
+        data_lst = []
         for node_group in group:
-            markers += graph.node[node_group]["markers_lst"]
+            val = graph.node[node_group][field_to_check]
+            if type(val) == list:
+                data_lst += graph.node[node_group][field_to_check]
+            else:
+                data_lst.append(val)            
             
         #create a dictionary from the list and plot it
-        diff_treshold.print_log("calc_markers_per_connected_components before plotting")
-        d = create_dict_from_list(markers)
-        label = "markers per connected component with " + str(len(group)) + " cells"
-        xlabel = "markers"
+        diff_treshold.print_log("stats_of_connected_components - before plotting")
+        d = create_dict_from_list(data_lst)
+        label = name_field +" per connected component with " + str(len(group)) + " cells"
+        xlabel = name_field
         ylabel = "count"
-        file_name = "markers_for_connected_component_number_" + str(i) + ".png"
+        file_name = name_field + "_for_connected_component_number_" + str(i) + ".png"
         histogram_dict(d, file_name, label, xlabel, ylabel, 'yellow', is_save)
     
-
+    
+def degrees_of_nodes_in_connected_coponents(graph,is_save):
+    ''' this method gets a graph and for each connected component creates a histogrm
+    of the degrees of nodes in it'''
+    
+    diff_treshold.print_log("degrees_of_nodes_in_connected_coponents - start")
+    
+    connected_components = list(nx.connected_components(graph))
+    for i in range(0, len(connected_components)):
+        group = connected_components[i]
+        degree_lst = []
+        for node in group:
+            degree_lst.append(graph.degree(node))
+        
+        #create a dictionary from the list and plot it
+        diff_treshold.print_log("degrees_of_nodes_in_connected_coponents - before plotting")
+        d = create_dict_from_list(degree_lst)
+        label = "degrees per connected component with " + str(len(group)) + " cells"
+        xlabel = "degree"
+        ylabel = "count"
+        file_name = "degree_for_connected_component_number_" + str(i) + ".png"
+        histogram_dict(d, file_name, label, xlabel, ylabel, 'pink', is_save)
+    
+    
           
 def create_dict_from_list(lst):
     ''' this method gets a list and returns a dictionary with the count of each var'''
@@ -191,7 +278,23 @@ def histogram_dict(d, filename , label, xlabel, ylabel ,color, is_save):
         plt.savefig(filename,dpi = 420)
     
     plt.show()
+
+
+def get_nei_panels_for_everybody(graph):
+    ''' for each node get dict of panels of neighbours'''
+    ret = []
+    for node in graph.nodes():
+        d = {}
+        panels_list = []
+        for nei in graph.neighbors(node):
+            panels_list.append(graph.node[nei]["panel_id"])
+        panels_dict = create_dict_from_list(panels_list)
+        d[node] = panels_dict
+        ret.append(d)
     
+    return ret   
+            
+            
 
 def main():
     # get parameters from user

@@ -3,6 +3,12 @@ import datetime as dt
 import os
 import sys
 import re
+import statsmodels.api as sm
+import numpy as np
+
+
+import warnings
+
 
 TWINS_DATA = r'/groups/igv/ronlevy/data//'
 
@@ -515,13 +521,15 @@ def create_corr_between_all(df):
     
     print_log("create coor - start - before create needed dataframe")
     #create the dataframe in the needed way
-    trans = df.transpose()
+    df_no_zero =  df.replace(0,np.nan)
+    trans = df_no_zero.transpose()
     trans = trans.drop("Panel ID")
     trans_float = trans.astype('float32')
     
+    
     # run the corr function
     print_log("create coor - before coor")
-    corr_res = trans_float.corr()
+    corr_res = trans_float.corr(method="pearson",min_periods = 100)
     
     print_log("create coor - before return")
     
@@ -719,10 +727,204 @@ def unite_all_pass_files(directory,treshold):
     df.to_csv(full_path,header = True, index = True)
         
             
+def create_filtered_trait_values_file_with_age(united_pass_path, demographic_path,original_trait_vals_path,new_file_path):
+    ''' This method gets 3 paths - the first is for all traits that passed the
+    treshold, the other one is for the demographic file and the third one has 
+    original trait values. The method creates new traits value file contains only
+    the traits that passed the treshold and adds the age data to that file'''
+    
+    print_log("create_filtered_trait_values_file_with_age - start, before read files")    
+    
+    united_df = pd.read_csv(united_pass_path, header = 0, index_col = "trait1")
+    
+    demographic_df = pd.read_excel(demographic_path, header = 0, index_col = "FlowJo Sample ID")
+    
+    only_age = demographic_df["Age"]
+    
+    trait_vals = pd.read_excel(original_trait_vals_path, header = 0, index_col = "FlowJo Subject ID")
+    
+    print_log("create_filtered_trait_values_file_with_age - after read all files")    
+    
+    #take all the traits that passed the treshold and enter them into a list
+    passed_traits_lst = list(united_df.index)
+    
+    passed_traits_lst += list(united_df["trait2"])
+    
+    distinct_passed_traits = list(set(passed_traits_lst))
+    
+    filtered_trait_vals = trait_vals.loc[distinct_passed_traits]
+    
+    print_log("create_filtered_trait_values_file_with_age - after creating filtered trait vals DF")    
+    
+    final_df = filtered_trait_vals.append(only_age)
+    
+    final_df.to_excel(new_file_path, index = True, header = True)
+    
+    return final_df
+    
+    
+
+def calc_new_corr_with_age(passed_traits_with_age_path, united_pass_file_path, rows_to_skip,output_file_path, is_return):
+    ''' This method gets 2 paths for a new traits file with age column, and path to all
+    pairs of traits that passed the first and stupid treshold. Also get list of rows to
+    skip reading.
+    it calculates a mixed model for each pair with or without age as a fixed effect'''
+    
+    print_log("calc_new_corr_with_age - start, before read files")
+    
+    lst_corr = []
+    
+    united_df = pd.read_csv(united_pass_file_path,header = 0, skiprows = rows_to_skip, index_col = "trait1") 
+    passed_traits = pd.read_excel(passed_traits_with_age_path, header = 0, index_col = "FlowJo Subject ID")
+    
+    # change structure of dataframe to fit needs
+    passed_traits.drop("Panel ID", inplace=True,axis=1) 
+    trans = passed_traits.transpose()
+    trans_float = trans.astype(float)
+    trans_float = trans_float.rename(columns=lambda x: x.replace(':', '_'))
+    trans_float = trans_float.rename(columns=lambda x: x.replace(' ', ''))
+    trans_float.fillna(0,inplace=True) # bug in statsmodel
+    
+    print_log("calc_new_corr_with_age - after read and fix DF, run on all pairs")
+    
+    distinct_idx = list(set(united_df.index))
+    for i in range(0, len(distinct_idx)):
+        if i % 50 == 0:
+            print_log("calc_new_corr_with_age - in loop, i = " + str(i))
+        idx = distinct_idx[i] 
+        t1 = idx.replace(":","_")
+        t1 = t1.replace(" ","")
+        gls_model = sm.GLS(trans_float[t1],trans_float["Age"])
+        
+        #warnings.catch_warnings():
+        warnings.filterwarnings("ignore")
+        gls_res = gls_model.fit()    
+        ### get something from here as well!!!
+        
+        #print("t1 is " + t1 + " original is " + idx)
+        pair_traits = united_df.loc[idx]["trait2"]
+        if type(pair_traits) == str:
+            pair_traits = [pair_traits]
+        for second_trait in pair_traits:
+            t2 = second_trait.replace(":","_")
+            t2 = t2.replace(" ","")
+           # print("t2 is " + t2 + " original is " + second_trait)
+            #create a mixed model to see correlation with age
+            df_model = sm.MixedLM.from_formula(t1 + " ~ " + t2, trans_float, groups=trans_float["Age"])
+            
+            warnings.filterwarnings("ignore")
+            res = df_model.fit()    
+                
+            #### what to do from here!!!!
+            var = (idx,second_trait,res)
+            lst_corr.append(var)
+    
+    print_log("calc_new_corr_with_age - after loop, create DF")
+    
+    new_corr_df = pd.DataFrame(data = lst_corr, columns = ["trait1","trait2", "corr"])
+    
+    new_corr_df.to_csv(output_file_path, index = False) #check param index
+    
+    if is_return:
+        return new_corr_df
+                     
+
+def create_rows_to_skip_lst(path_of_file_to_break, idx_col, break_size):
+    ''' this method gets a path of DF to break into pieces in break_size size
+    and returns string with command to create the needed skiprows data'''
+    
+    df = pd.read_csv(path_of_file_to_break, index_col = idx_col)
+    n = len(df)
+    ret_lst = []
+    j = 1
+
+    cmd_start = "[i for i in range("
+    cmd_end = ")]"
+    # to connect to lists, one before first val to inclue and other after last val
+    cmd_connect = "+" 
+    
+    while j < n:
+        end_pos = min(j + break_size, n)
+        curr_cmd = cmd_start + "1," + str(j) + cmd_end 
+        curr_cmd += cmd_connect
+        curr_cmd += cmd_start + str(end_pos) + ", " + str(n) + cmd_end
+        curr_lst = eval(curr_cmd)
+        ret_lst.append(curr_lst)
+        j = end_pos
+    
+    return ret_lst
+        
+        
+        
+def check_fucked_data(traits_path,output_path):
+    ''' This method checks how problematic the data is..'''
+    print_log("check_fucked_data - before read file")
+    df = pd.read_csv(traits_path,header = 0, index_col = "FlowJo Subject ID")
+    df.drop("Panel ID",inplace = True,axis=1)
+    if "Age" in df.index:
+        df.drop("Age",inplace = True)
+    #change nan into number
+    df.fillna(0,inplace=True)
+    print_log("check_fucked_data - after read and fix file, before super duper loop")
+    
+    ret_lst=[]    
+    
+    idx_lst = df.index #in this dataset the index is unique
+    n = len(idx_lst)
+    for i in range(0, n):
+        if i % 100 == 0:
+            print_log("check_fucked_data - in loop, i = " + str(i))
+        trait_i = df.loc[idx_lst[i]]
+        trait_i_vals = trait_i == 0 #series with true when value == 0
+        for j in range(i+1 , n):
+            trait_j = df.loc[idx_lst[j]]
+            trait_j_vals = trait_j == 0 #series with true when value == 0
+            res = trait_i_vals.apply(lambda x: trait_i_vals[x] == False and trait_j_vals[x] == False)
+            var = (idx_lst[i],idx_lst[j],sum(res)) #True is 1
+            ret_lst.append(var)
+    
+    print_log("check_fucked_data - after loop, create and write DF")
+    
+    final_df = pd.DataFrame(ret_lst,columns = ["trait1","trait2","num_of_vals"])
+    
+    final_df.to_csv(output_path,header = True,index = True)
+    
+    return final_df
+    
+    
+def change_united_pass_file(path, new_path, idx_to_change, need_to_adjust_idx):
+    ''' this method gets the path of a united pass file and a list 
+    of all indices that didn't work in R. It switches the location of trait1
+    and trait2 and rewrite the united file. need_to_adjust_idx is a boolean
+    which indicates whether we need to change the idx (R starts from 1..)'''
+    
+    print_log("change_united_pass_file - start, before read file")
+    
+    df = pd.read_csv(path, header = 0) #no index in purpose - rownum is idx
+    
+    print_log("change_united_pass_file - before loop")
+    n = len(idx_to_change)
+    for i in range(0, n):
+        if i % 500 == 0:
+            print_log("change_united_pass_file - in loop i = " + str(i))
+        
+        idx = idx_to_change[i]        
+        
+        if need_to_adjust_idx:
+            idx -= 1
+        
+        #now switch trait1 and trait2 vals
+        trait1_val = df.loc[idx]["trait1"]
+        trait2_val = df.loc[idx]["trait2"]
+        
+        df = df.set_value(idx,"trait1",trait2_val)
+        df = df.set_value(idx,"trait2",trait1_val)
             
         
+    
+    
 
-def main():
+def main_for_tresholded_data():
     # get parameters from user
     args = sys.argv
     corr_df_path = args[1]
@@ -748,6 +950,21 @@ def main():
         print_log("MAIN - after read DF, before tresh")
         
         create_tresholded_corr_df(corr_df, tresh, compare_only_diff_panels ,tresh_output_path, print_indicator,is_return)
+
+def main():
+    
+    #read_files    
+    args = sys.argv
+    filename1 = args[1]
+    filename2 = args[2]
+    is_return = args[3]
+    to_overwrite = args[4]
+    
+    path1 = INPUT_DIR + filename1
+    path2 = INPUT_DIR + filename2
+    
+    create_correlation_map(path1, path2, is_return,to_overwrite)
+
 '''
 if __name__ == "__main__":
     main()

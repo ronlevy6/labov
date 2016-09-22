@@ -4,13 +4,17 @@ import os
 import re
 import numpy as np
 import networkx as nx
-import Triplet
+#import Triplet
 
 regex = 'P\d\d_P\d\d_treshold.*corr.csv'
 PATTERN = re.compile(regex) #check if need to add re.DOTALL
 
 SUB_PANELS_LST = ["P11","P12","P13","P14","P15","P16","P21","P22","P23","P24","P25",
                   "P26", "P31","P32","P41","P42","P51","P61","P71","P72"]
+                  
+MAX_P_VAL_TRESHOLD_95 = 0.000002         
+
+MAX_P_VAL_TRESHOLD_09 = 0.00000025
 
 
 def get_file_suffix(filename):
@@ -104,6 +108,51 @@ def create_network(treshold_dir):
     diff_treshold.print_log("create_network - finish, before return")           
     return final_dict
 
+
+def create_p_val_network_one_side(p_val_file, max_p_val,index_col,filter_col):
+    ''' this method gets an outfile R script file and creates a network according to it 
+    using index col as edge start and filter col as edge end'''
+    
+    diff_treshold.print_log("create_p_val_network_one_side - start")    
+
+    network_dict = {}   
+    
+    df = pd.read_csv(p_val_file,header = 0,index_col = index_col)
+    
+    good_p_vals = df[df["needed_p_val"] < max_p_val]
+    
+    good_p_vals.sort_values(by = "needed_p_val", ascending = True, inplace = True)
+    
+    diff_treshold.print_log("create_p_val_network_one_side - after read file and filter DF")    
+    
+    idx_lst = remove_dups(good_p_vals.index)
+    for idx in idx_lst:
+        vals = good_p_vals.loc[idx][filter_col] #get trait2 values for specific trait
+        
+        if type(vals) == str:
+            vals = [vals] #one variable list
+        else:
+            vals = list(vals)
+        network_dict[idx] = vals
+    
+    diff_treshold.print_log("create_p_val_network_one_side - after dict - return it")           
+    
+    return network_dict
+    
+def create_p_val_network(p_val_file, max_p_val):
+    ''' creates a full network'''
+    
+    diff_treshold.print_log("create_p_val_network - start")           
+    final_dict = {}
+    
+    d = create_p_val_network_one_side(p_val_file, max_p_val, "trait1","trait2")
+    final_dict = combine_dicts(final_dict,d)
+    
+    d = create_p_val_network_one_side(p_val_file, max_p_val, "trait2","trait1")
+    final_dict = combine_dicts(final_dict,d)
+    
+    return final_dict
+    
 
     
 def combine_dicts(dict1, dict2):
@@ -267,17 +316,15 @@ def add_corr_to_graph(graph, united_pass_path):
     for idx_tup in df.index:
         u = idx_tup[0]
         v = idx_tup[1]
+        attr = df.loc[idx_tup]["corr"]
         if graph.has_edge(u, v):
-            attr = df.loc[idx_tup]["corr"]
+            #attr = df.loc[idx_tup][col_to_add]
             graph.add_edge(u, v, corr = attr)
-        else:
-            #sanity check
-            print("something is tahat!!!")
     
     diff_treshold.print_log("add_corr_to_graph after loop - finish")    
     
 
-def find_all_triplets(graph):    
+def find_all_triplets(graph,edge_attr_name):    
     ''' this method runs on the graph and finds triplets of nodes x,i,j such that
     the edges x-i and x-j exist but the edge i-j doesn't'''
     
@@ -292,15 +339,77 @@ def find_all_triplets(graph):
             node_i = nei_lst[i]
             panel_i = diff_treshold.get_panel_id_substr(node_i)
             node_i_neis = graph.neighbors(node_i)
-            corr_i = graph.get_edge_data(node_x,node_i)["corr"]
+            corr_i = graph.get_edge_data(node_x,node_i)[edge_attr_name]
             for j in range(i + 1, len(nei_lst)):
                 if nei_lst[j] not in node_i_neis and panel_i != diff_treshold.get_panel_id_substr(nei_lst[j]):
                     #node_x and node_i are neighbours, also node_x and node_j
                     #but node_i and node_j not and they are from different panels
-                    corr_j = graph.get_edge_data(node_x,nei_lst[j])["corr"]
+                    corr_j = graph.get_edge_data(node_x,nei_lst[j])[edge_attr_name]
                     var = (node_x,node_i,nei_lst[j],corr_i,corr_j)                    
                     triplets_lst.append(var)
                     #print("enter var")
     
     diff_treshold.print_log("find all triplets after loop return list")        
     return triplets_lst
+
+
+def find_trios_in_graph_same_panel_also(graph,trait_vals_path):
+    ''' gets all trios and adds here also the nodes that are from same panel'''
+
+    diff_treshold.print_log("find_trios_in_graph_same_panel_also - start")
+    trios_lst = []
+    
+    df = pd.read_excel(trait_vals_path, header = 0, index_col = "FlowJo Subject ID")
+
+    corr_df = diff_treshold.create_corr_between_all(df)    
+    
+    for node_x in graph.nodes():
+        
+        nei_lst = graph.neighbors(node_x)
+        for i in range(0 , len(nei_lst)):
+            node_i = nei_lst[i]
+            node_i_neis = graph.neighbors(node_i)
+            corr_i = graph.get_edge_data(node_x,node_i)["corr"]
+            for j in range(i + 1, len(nei_lst)):
+                if nei_lst[j] not in node_i_neis :
+                    #node_x and node_i are neighbours, also node_x and node_j
+                    #but node_i and node_j not and they are from different panels
+                    corr_j = graph.get_edge_data(node_x,nei_lst[j])["corr"]
+                    unconnected_corr = corr_df.loc[node_i,nei_lst[j]]
+                    var = (node_x,node_i,nei_lst[j],corr_i,corr_j,unconnected_corr)                    
+                    trios_lst.append(var)
+                    #print("enter var")
+    
+    diff_treshold.print_log("find_trios_in_graph_same_panel_also - after loop return list")        
+    return trios_lst    
+
+def analyze_trios(trios_lst, treshold):
+    
+    same_panel_high_corr = 0
+    same_panel_low_corr = 0
+    diff_panel_high_corr = 0
+    diff_panel_low_corr = 0
+    
+    for trio in trios_lst:
+        node1 = trio[1]
+        node2 = trio[2]
+        unconnected_corr = trio[5]
+        diff_panel = False
+        low_corr = unconnected_corr < treshold
+        if diff_treshold.get_panel_id_substr(node1) != diff_treshold.get_panel_id_substr(node2):
+            diff_panel = True
+            
+        if diff_panel:
+            if low_corr:
+                diff_panel_low_corr += 1
+            else:
+                diff_panel_high_corr += 1
+        else:
+            if low_corr:
+                same_panel_low_corr += 1
+            else:
+                same_panel_high_corr += 1
+    
+    return (same_panel_high_corr,same_panel_low_corr,diff_panel_high_corr,diff_panel_low_corr)
+        
+        
