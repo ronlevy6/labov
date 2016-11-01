@@ -4,6 +4,8 @@ import os
 import re
 import numpy as np
 import networkx as nx
+import matplotlib.pyplot as plt
+
 #import Triplet
 
 regex = 'P\d\d_P\d\d_treshold.*corr.csv'
@@ -16,6 +18,7 @@ MAX_P_VAL_TRESHOLD_95 = 0.000002
 
 MAX_P_VAL_TRESHOLD_09 = 0.00000025
 
+MAX_P_VAL_ALL_DATA = 10**6 # the max treshold is 10^5, this will have all in it
 
 def get_file_suffix(filename):
     ''' This method gets a filename and returns its suffix'''
@@ -298,8 +301,21 @@ def add_markers_for_traits(graph, trait_analysis_path):
         if trait in graph:
             #trait has a node, take only the markers that are "+" and add as attributes
             trait_data = trait_analysis_df.loc[trait]
-            filtered_data = trait_data[trait_data == "+"]
-            markers = list(filtered_data.index)
+            plus_filtered_data = trait_data[trait_data == "+"]
+            plus_markers = list(plus_filtered_data.index)
+            minus_filtered_data = trait_data[trait_data == "-"]
+            minus_markers = list(minus_filtered_data.index)
+            markers = []
+            for i in range(len(plus_markers)):
+                var = plus_markers[i]
+                insert_var = var + "+"
+                markers.append(insert_var)
+            
+            for j in range(len(minus_markers)):
+                var = minus_markers[j]
+                insert_var = var + "-"
+                markers.append(insert_var)
+                
             markers.sort()
             graph.add_node(trait, markers_lst = markers)
     
@@ -347,10 +363,35 @@ def find_all_triplets(graph,edge_attr_name):
                     corr_j = graph.get_edge_data(node_x,nei_lst[j])[edge_attr_name]
                     var = (node_x,node_i,nei_lst[j],corr_i,corr_j)                    
                     triplets_lst.append(var)
+                    
                     #print("enter var")
     
     diff_treshold.print_log("find all triplets after loop return list")        
     return triplets_lst
+    
+
+
+def create_full_graph(p_val_file, max_p_val, united_corr_pass_path, trait_analysis_path):
+    ''' this method runs all the needed stuff to get a graph'''
+    
+    diff_treshold.print_log("create_full_graph - before create network")    
+    
+    network = create_p_val_network(p_val_file,max_p_val)
+    
+    diff_treshold.print_log("create_full_graph - before create graph")        
+    
+    graph = create_graph_from_network(network)
+    
+    diff_treshold.print_log("create_full_graph - before add corr")    
+    
+    add_corr_to_graph(graph,united_corr_pass_path)
+    
+    diff_treshold.print_log("create_full_graph - before add markers")        
+    
+    add_markers_for_traits(graph,trait_analysis_path)
+    
+    return graph       
+
 
 
 def find_trios_in_graph_same_panel_also(graph,trait_vals_path):
@@ -412,4 +453,223 @@ def analyze_trios(trios_lst, treshold):
     
     return (same_panel_high_corr,same_panel_low_corr,diff_panel_high_corr,diff_panel_low_corr)
         
-        
+
+def merge_graph_nodes(graph,trait_val_path, min_unconneced_treshold, min_common_markers):
+    ''' this method unites nodes in the graph when the following conditions are met:
+    1 - they have at least min_common_markers (3) common markers and above 66% common markers
+    2 - they have the same neighbours. OR - for each uncommon neighbour the correlation
+    between the non-connected traits is above min_unconneced_treshold (0.85).
+    When merging 2 nodes the following attributes will be changed:
+        markers_lst - combine both traits markers
+        correlation - for each edge the new correlation will be the average of correlations
+        merged_with - list with previous nodes before merge'''
+    
+    diff_treshold.print_log("merge_graph_nodes - start, before read file")
+    
+    traits_val_df = pd.read_csv(trait_val_path, header = 0, index_col = "FlowJo Subject ID")
+    
+    df_no_zero =  traits_val_df.replace(0,np.nan)
+    
+    to_corr_df = df_no_zero.astype('float32')
+    
+    corr_df = to_corr_df.corr(method="pearson",min_periods = 100)
+    
+    diff_treshold.print_log("merge_graph_nodes - after read file and calc corr, before loop")
+    
+    merged_nodes_lst = [] # a list of tuples to contain all merged nodes
+    
+    all_nodes = list(graph.nodes())
+    n = len(all_nodes)
+    
+    for i in range(0, n):
+        if i % 100 == 0:
+            diff_treshold.print_log("merge_graph_nodes - in loop, i = " + str(i))            
+        curr_node = all_nodes[i]
+        if (curr_node in graph):
+            #curr node wasn't merged
+            j = i + 1
+            while j < n:
+                #second node wasn't merged as well
+                if (all_nodes[j] in graph):
+                    if can_merge_nodes(graph,curr_node,all_nodes[j], corr_df, min_unconneced_treshold, min_common_markers):
+                        merged_tup = (curr_node, all_nodes[j])
+                        merged_nodes_lst.append(merged_tup)
+                        merge_2_nodes(graph, curr_node, all_nodes[j], corr_df)
+                        #remove when doing real merging
+                        j = n #exit loop and start merging the next node
+                j += 1
+                        
+    return merged_nodes_lst
+    
+
+def can_merge_nodes(graph, node1, node2, corr_df, min_unconneced_treshold, min_common_markers):
+    ''' this method gets a graph, 2 nodes and traits val DF and returns True if the
+    nodes can be merged according to conditions described in unite_graph_nodes method'''
+    
+    # check neighberood        
+    node1_neis = graph.neighbors(node1)    
+    node2_neis = graph.neighbors(node2)
+    
+    node1_only_neis = list(set(node1_neis) - set(node2_neis))    
+    node2_only_neis = list(set(node2_neis) - set(node1_neis))
+    
+    for nei in node1_only_neis:
+        if corr_df.loc[node2,nei] < min_unconneced_treshold:
+            return False
+    
+    for nei in node2_only_neis:
+        if corr_df.loc[node1, nei] < min_unconneced_treshold:
+            return False
+    
+    #if got here - passed the neighbours condition, now check the markers
+    node1_markers = graph.node[node1]["markers_lst"]
+    node2_markers = graph.node[node2]["markers_lst"]
+    
+    common_markers = set(node1_markers).intersection(node2_markers)
+    num_of_common = len(common_markers)
+    #check for enough common markers
+    if num_of_common < min_common_markers:
+        return False
+    
+    #check for common markers pct
+    if num_of_common / len(node1_markers) < 0.66 or num_of_common / len(node2_markers) < 0.66:
+        return False
+    
+    #if got here - passed all checks and nodes can be merged
+    return True
+    
+    
+def merge_2_nodes(graph, node1, node2, corr_df):
+    ''' this method will merge node1 with node2 and make the changes written in merge_graph_nodes'''
+    
+    #unite markers_lst
+    full_markers_lst = list(graph.node[node1]["markers_lst"]) + list(graph.node[node2]["markers_lst"])
+    distinct_markers_lst = list(set(full_markers_lst))
+    
+    #get all prevoius nodes
+    node1_prev = graph.node[node1].get("merged_with",[])
+    if type(node1_prev) == str:
+        node1_prev = [node1_prev]
+    
+    node2_prev = graph.node[node2].get("merged_with",[])
+    if type(node2_prev) == str:
+        node2_prev = [node2_prev]
+    
+    all_prevs = node1_prev + node2_prev + [node2] #add node2 to the list
+    distinct_prevs = list(set(all_prevs)) 
+    
+    #fix all correlations between nodes
+    node1_neis = graph.neighbors(node1)    
+    node2_neis = graph.neighbors(node2)
+    all_neis = node1_neis + node2_neis
+    distinct_neis = list(set(all_neis))
+    
+    #print("all_neis = ")
+    #print(all_neis)
+    
+    #print("distinct_neis = " )
+    #print(distinct_neis)
+    
+    new_edges_lst = []
+    for nei_node in distinct_neis:
+        corr1 = corr_df.loc[node1,nei_node]
+        corr2 = corr_df.loc[node2,nei_node]
+        if corr1 == corr1 and corr2 == corr2:
+            #both are real vals
+            new_corr = (corr1 + corr2) / 2
+        elif corr1 == corr1:
+            #only corr1 is good
+            new_corr = corr1
+        else:
+            #only corr2 is valid
+            new_corr = corr2
+        new_edge = ( nei_node, new_corr)
+        new_edges_lst.append(new_edge)
+    
+    #update node fields
+    graph.add_node(node1, markers_lst = distinct_markers_lst, merged_with = distinct_prevs)
+    
+    #create and update new edges
+    for edge_to_add in new_edges_lst:
+        graph.add_edge(node1, edge_to_add[0], corr = edge_to_add[1])
+    
+    #remove the merged node
+    graph.remove_node(node2)
+    
+    #return new_edges_lst
+
+
+def get_graph_all_data(combined_file, trait_anal_path, n):
+    ''' this method creates a graph and runs the following checks on it:
+    p - val - 0.01 / n
+    #nodes
+    #edges
+    #trios
+    #connected components.
+    The tests are ran twice - first time for all data, the second one is
+    only for the connections below the p- val.
+    combined file - united file with p val and with correlation'''
+    
+    p_val = 0.01 / n  
+    
+    full_graph = create_full_graph(combined_file, MAX_P_VAL_ALL_DATA, combined_file, trait_anal_path)
+    full_graph_dict = fetch_graph_data(full_graph)
+    
+    p_val_graph = create_full_graph(combined_file, p_val, combined_file, trait_anal_path)
+    p_val_graph_dict = fetch_graph_data(p_val_graph)
+    
+    #fetch graphs data
+    
+    ret = (p_val, full_graph, full_graph_dict, p_val_graph, p_val_graph_dict)    
+    return ret
+    
+def fetch_graph_data(graph):
+    
+    nodes_num = len(graph.nodes())
+    edges_num = len(graph.edges())
+    
+    trios = find_all_triplets(graph, "corr")
+    trios_num = len(trios)
+    
+    graph_connected_components = list(nx.connected_components(graph))
+    connected_components_num = len(graph_connected_components)        
+    
+    ret_dict = {}
+    ret_dict["num_of_nodes"] = nodes_num
+    ret_dict["num_of_edges"] = edges_num
+    ret_dict["num_of_trios"] = trios_num
+    ret_dict["num_of_connected_components"] = connected_components_num
+    
+    return ret_dict
+
+def try_to_print():
+    ''' main for printing the graph'''
+    united_corr_pass_path = p_val_file = r'C:\Ron\אוניברסיטה\תל אביב\שנה ב\פרויקט\twins data\changed_data\666_Ron\tresh_098\tresh_98_super_duper_file.csv'
+    max_p_val = 0.01 / 794
+    trait_analysis_path = r'C:\Ron\אוניברסיטה\תל אביב\שנה ב\פרויקט\twins data\changed_data\4_Trait_Analysis\4. Trait Analysis_good.xlsx'
+    graph = create_full_graph(p_val_file,max_p_val, united_corr_pass_path, trait_analysis_path)
+
+    pos=nx.spring_layout(graph)
+    nx.draw(graph,pos,node_color='#A0CBE2',edge_color='#BB0000',width=2,edge_cmap=plt.cm.Blues,with_labels=True)
+    
+    #option number1
+    plt.savefig("graph.png", dpi=500, facecolor='w', edgecolor='w',orientation='portrait', papertype=None, format=None,transparent=False, bbox_inches=None, pad_inches=0.1)
+    
+    #option number 2
+    plt.savefig("graph2.png",dpi = 1000)
+    
+    #option 3
+    plt.savefig("graph2.pdf")
+    
+    #different figure type
+    plt.figure(3,figsize=(12,12)) 
+    nx.draw(graph,pos,node_size=60,font_size=8) 
+    plt.savefig("graph3.png",dpi = 1000)
+    
+    
+    return graph
+    
+    
+    
+    
+    

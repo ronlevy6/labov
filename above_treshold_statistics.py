@@ -44,7 +44,7 @@ def corr_dist_between_pannels(filtered_df,panel1,panel2,is_show,col_to_filter):
     ''' this method calculates the distribution of the correlation between 2 panels'''
     
     corr_dist = np.array(filtered_df[col_to_filter])
-    plt.xlabel("p_val")
+    plt.xlabel("correlation")
     plt.ylabel("frequency")
     plt.title("frequency for correlation between panels " + panel1 + " and " + panel2)
     plt.hist(corr_dist)
@@ -109,6 +109,9 @@ def pie_chart_neigbours_panel(united_df,is_pie,is_save):
 '''
 degree_distribution - per panel
 all_pannels_degree_distribution - runs degree_distribution on all panels
+graph_corr_dist_between_pannels - histogram of correlation between panels
+graph_calc_corr_dist_per_all_panels - runs graph_corr_dist_between_pannels on all panels
+graph_pie_chart_neigbours_panel - distibution of neighbours of panels
 calc_hub_and_neighbours_markers - for each hub calculate the markers of neighbours
 calc_hubs_neighbour_panels - for each hub calcs distribution of neigbhours by panels
 stats_of_connected_components - distribution of nodes by panels/markers
@@ -143,6 +146,74 @@ def all_pannels_degree_distribution(graph,is_save):
         degree_distribution(graph,panel_id,is_save)
 
 
+def graph_corr_dist_between_pannels(graph,panel1,panel2,is_show,attr_name):
+    ''' this method calculates the distribution of the correlation between 2 panels'''
+    
+    corr_dist = []
+    for u,v in graph.edges():
+        panel_a = diff_treshold.get_panel_id_substr(u) 
+        panel_b = diff_treshold.get_panel_id_substr(v) 
+        if (panel_a == panel1 and panel_b == panel2) or (panel_a == panel2 and panel_b == panel1):
+            corr_dist.append(graph.get_edge_data(u,v)[attr_name])
+        
+    plt.xlabel("correlation")
+    plt.ylabel("frequency")
+    plt.title("frequency for correlation between panels " + panel1 + " and " + panel2)
+    plt.hist(corr_dist)
+    fig_name = panel1 + "_" + panel2 + "_corr_dist_graph.png"
+    if is_show:
+        plt.savefig(fig_name)
+        plt.show()
+    
+
+def graph_calc_corr_dist_per_all_panels(graph):
+    ''' this method calculates the distributaion of correaltions between all panels'''
+    
+    n = len(diff_treshold.PANELS_LST)
+    for i in range(0, n):
+        panel1 = diff_treshold.PANELS_LST[i]
+        for j in range(i + 1, n):
+            #no need to calc between same panels
+            panel2 = diff_treshold.PANELS_LST[j]
+            graph_corr_dist_between_pannels(graph,panel1,panel2,is_show = True,attr_name = "corr")
+
+
+
+def graph_pie_chart_neigbours_panel(graph,is_pie,is_save):
+    ''' this method calcs the histogram of neighbours's panel per each panel '''
+    n = len(diff_treshold.PANELS_LST)
+    nei_mat = np.zeros((n,n)) #matrix with cell for each two panels combination
+    
+    for u,v in graph.edges():
+        u_panel = diff_treshold.get_panel_id_substr(u)
+        v_panel = diff_treshold.get_panel_id_substr(v)
+        
+        u_panel_idx = diff_treshold.PANELS_LST.index(u_panel)
+        v_panel_idx = diff_treshold.PANELS_LST.index(v_panel)
+            
+        nei_mat[u_panel_idx][v_panel_idx] += 1 
+        nei_mat[v_panel_idx][u_panel_idx] += 1# symetry
+    
+    #print and save results
+    labels = diff_treshold.PANELS_LST
+    colors = ['gold','yellow','blue','red','green','brown']
+    for i in range(0, n):
+        #set the plot
+        plt.xlabel("panel ID")
+        plt.ylabel("amount of neigbours")
+        plt.title("histogram of neigbours of traits from panel P" + str(i+1))
+        if is_pie:
+            plt.pie(nei_mat[i], colors = colors,labels = labels,autopct='%1.1f%%')
+        else:
+            #bar plot
+            plt.bar(np.arange(n), nei_mat[i],align='center')
+            plt.xticks(np.arange(n), labels)
+            
+        if is_save:
+            fig_name = "P" + str(i+1) + "_neigbours_distribution_full_graph.png"
+            plt.savefig(fig_name)
+        plt.show()
+    
 ######## hubs statistics #########
 
 

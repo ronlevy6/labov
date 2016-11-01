@@ -30,121 +30,6 @@ COMPARE_DIFF_PANELS_ONLY = True
 PRINT_INDICATOR = 400
 
 
-################# irrelevant part #########################
-
-def get_idx_of_samples(demographic_path):
-    ''' This method runs on the demograpic xlsx file and returns numpy nd-array
-    of indexes represnts the sample ID's of chosen samples while 
-    making sure to not take two sisters'''
-    
-    full_path = TWINS_DATA + demographic_path
-    df = pd.read_excel(full_path,0)  # read first sheet only
-    
-    grouped = df.groupby("Unique Family ID").min() # get min sample ID per Family ID
-    grouped = grouped["FlowJo Sample ID"] # Sample ID is the only needed data
-    ret_val = grouped.values
-    
-    #ret_val = list(grouped.values)
-    
-    return ret_val
-
-
-def create_panel_dictionary(mmc1_path):
-    ''' This method gets mmc1.xlsx path and returns a dictionary which built as:
-    Key -> 1..7 represents each panel.
-    Value -> list of markers for specefic panel according to the mmc1 file'''
-    
-    hard_coded_data_to_remove = ["Reagent","Viability"]
-    # init empty dictionary
-    ret_dict = {}
-       
-    full_path = TWINS_DATA + mmc1_path
-    df = pd.read_excel(full_path, skiprows = 2) # to get panels as indexes
-    #run on all 7 panels
-    for i in range(1,8):
-        tmp_lst = []
-        key = 'P' + str(i)
-        for val in df[key]:
-            if (val == val):
-                # way to check the value is not NaN
-                tmp_lst.append(val)
-        
-        # remove unneeded data
-        tmp_lst.pop(0) # remove tmp value
-        
-        for check_remove in hard_coded_data_to_remove:
-            if check_remove in tmp_lst:
-                tmp_lst.remove(check_remove)        
-            
-        ret_dict[i] = tmp_lst
-    
-    return ret_dict
-            
-        
-def get_panel_number_by_dict(trait_analysis_path,mmc1_path):
-    ''' This method creates new trait_analysis file with extra column - panel number.
-    It does so according to the columns in the end of the original trait_analysis file
-    and mmc1 file'''
-    panel_lst = [] #Empty list to be populated with panel Id for each trait
-    panel_dict = create_panel_dictionary(mmc1_path)
-    panel_numbers = list(panel_dict.keys()) # get number of panels
-    full_path = TWINS_DATA + trait_analysis_path
-    
-    # Read file and use trait id as index column
-    df_idx = pd.read_excel(full_path,0,index_col = "Trait ID") 
-    
-    for trait_id in df_idx.index:
-        panel_id = get_panel_id_dict(trait_id,df_idx.loc[trait_id],panel_numbers,panel_dict)
-        panel_lst.append(panel_id)
-        
-    df_idx.insert(0,"Panel ID",panel_lst,True) #Add panel id column to file
-    
-    new_path = DEST_DIR + trait_analysis_path
-    df_idx.to_excel(new_path, index = True) #check field vals
-
-
-
-
-def get_panel_id_dict(trait_id, single_trait_data,panel_numbers,panel_dict ):
-    ''' This method gets trait_id and it's data. It also gets all panels exists 
-    and the dictionary of the pannels and returns the panel ID for specific trait ID'''
-    
-    copy_panel_numbers = panel_numbers[::] #copy of the list
-    reduced_data = single_trait_data[13:] #remove unneeded data 
-    is_non_null = False
-        
-    
-    indexes = reduced_data.index
-    # check over all optional markers
-    for i in range(0, len(reduced_data)):
-        if reduced_data[i] == reduced_data[i]:
-            is_non_null = True
-            #current field is not nan
-            marker = indexes[i] #get marker name
-            for j in copy_panel_numbers:
-                if marker not in panel_dict[j]:
-                    copy_panel_numbers.remove(j)
-    if (is_non_null == True):
-        ret_val = str(copy_panel_numbers).strip('[]') # change panels into string
-    else:
-        ret_val = "All Markers are Null"
-    return ret_val
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-################# only this is good #########################
-
 
 
 def add_panel_id_column_to_file(path,header,mark):
@@ -758,9 +643,13 @@ def create_filtered_trait_values_file_with_age(united_pass_path, demographic_pat
     
     final_df = filtered_trait_vals.append(only_age)
     
-    final_df.to_excel(new_file_path, index = True, header = True)
+    trans_final_df = final_df.transpose()
     
-    return final_df
+    trans_final_df.drop("Panel ID", inplace = True)
+    
+    trans_final_df.to_csv(new_file_path, index = True, header = True)
+    
+    return trans_final_df
     
     
 
@@ -919,10 +808,93 @@ def change_united_pass_file(path, new_path, idx_to_change, need_to_adjust_idx):
         
         df = df.set_value(idx,"trait1",trait2_val)
         df = df.set_value(idx,"trait2",trait1_val)
+    
+    print_log("change_united_pass_file - after loop, write file")
+    
+    df.to_csv(new_path,header=True,index = True) #check about index
             
-        
+
+def create_R_files_for_second_run(original_united_full, first_run_output, new_united_file_output_path):
+    ''' this method fixes the input files for R and changes the location 
+    of trait1 and trait2 when the mixed model didn't work because the correlation
+    of trait2 was to high with age'''
     
+    print_log("create_R_files_for_second_run - start, before read files")
     
+    r_res = pd.read_csv(first_run_output, header = 0, index_col=["trait1","trait2"])
+    
+    orig_united_df = pd.read_csv(original_united_full, header=0, index_col=["trait1","trait2"])
+    
+    print_log("create_R_files_for_second_run - after read files - get only problematic rows")
+    
+    needed_data = r_res[r_res["needed_p_val"] == 100000]
+    
+    re_run_idx = list(needed_data.index)
+    
+    lst_of_new_data = []
+    
+    for tup_idx in re_run_idx:
+        trait1_val = tup_idx[0]
+        trait2_val = tup_idx[1]
+        corr = orig_united_df.loc[trait1_val,trait2_val]["corr"]
+        #switch the traits position!!
+        var = (trait2_val,trait1_val,corr)
+        lst_of_new_data.append(var)
+    
+    print_log("create_R_files_for_second_run - after loop, now create the DF")
+    
+    final_df = pd.DataFrame(lst_of_new_data,columns= ["trait1","trait2","corr"])
+    
+    final_df.to_csv(new_united_file_output_path,index = False)
+    
+
+def unite_R_result_file(first_run_path,second_run_path, united_run_result):
+    ''' this mehtod creates a single R output file with data from both runs'''
+    
+    print_log("unite_R_result_file - start, before read the files")
+    
+    first_run_df = pd.read_csv(first_run_path, header = 0, index_col = ["trait1","trait2"])
+    second_run_df = pd.read_csv(second_run_path, header = 0, index_col = ["trait2","trait1"])
+    
+    print_log("unite_R_result_file - after read file, now fix data")    
+    second_run_idx = list(second_run_df.index)
+    for curr_idx in second_run_idx:
+        new_p_val = second_run_df.loc[curr_idx]["needed_p_val"]
+        first_run_df = first_run_df.set_value(curr_idx,"needed_p_val",new_p_val)
+    
+    first_run_df.to_csv(united_run_result, header = True, index = True)
+
+def create_mega_file(r_output_file, united_pass_file, output_path, is_return):
+    ''' this method gets 2 files, united pass file and R results. It combines them
+    to one file that looks like - trait1,trait2,coor,p_val'''
+    
+    print_log("create_mega_file - start, before read file")    
+    
+    r_df = pd.read_csv(r_output_file, header = 0, index_col = ["trait1","trait2"])
+    united_df = pd.read_csv(united_pass_file, header = 0, index_col = ["trait1","trait2"])
+    print_log("create_mega_file - after read file")    
+    
+    n = len(united_df) # number of trait pairs
+    final_df = united_df.copy()
+    #add random number, now we will update them
+    final_df["needed_p_val"] = np.random.randn(n)
+    
+    print_log("create_mega_file - before loop")    
+    idx_lst = r_df.index
+    for i in range(0, len(idx_lst)):
+        if i % 10000 == 0:
+            print_log("create_mega_file - in loop, i = " + str(i))                
+        idx = idx_lst[i]
+        p_val = r_df.loc[idx]["needed_p_val"]
+        final_df = final_df.set_value(idx, "needed_p_val",p_val)
+    
+    print_log("create_mega_file - after loop, before write file")    
+    final_df.to_csv(output_path, header = True, index = True)
+    if is_return:
+        return final_df
+    
+
+##################### different main functions!!!
 
 def main_for_tresholded_data():
     # get parameters from user
@@ -951,7 +923,7 @@ def main_for_tresholded_data():
         
         create_tresholded_corr_df(corr_df, tresh, compare_only_diff_panels ,tresh_output_path, print_indicator,is_return)
 
-def main():
+def main_create_correlation_map():
     
     #read_files    
     args = sys.argv
